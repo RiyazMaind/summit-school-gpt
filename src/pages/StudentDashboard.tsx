@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { BookOpen, ChevronRight, Search, Sparkles, LogOut } from "lucide-react";
@@ -16,6 +16,16 @@ export default function StudentDashboard() {
   const [selectedClass, setSelectedClass] = useState<number>(10);
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    if (userProfile?.grade) {
+      const gradeNum = Number(userProfile.grade);
+      if (!Number.isNaN(gradeNum)) {
+        setSelectedClass(gradeNum);
+      }
+    }
+  }, [userProfile?.grade]);
+
   const currentSubjects = subjects[selectedClass] || [];
   const currentChapters = selectedSubject ? chapters[selectedSubject] || [] : [];
 
