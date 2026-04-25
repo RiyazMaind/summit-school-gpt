@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { BookOpen, LayoutDashboard, GraduationCap, Users, LogOut, Menu, X, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { getCurrentSchool } from "@/config/schools";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -41,6 +42,7 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
   const navigate = useNavigate();
   const config = roleConfig[role];
   const RoleIcon = config.icon;
+  const school = getCurrentSchool();
 
   return (
     <div className="min-h-screen bg-background">
@@ -50,18 +52,18 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
           <Link to="/" className="flex items-center gap-3">
             {/* School Logo */}
             <img
-              src="/school-logo.png"
-              alt="Summit School"
+              src={school.logo}
+              alt={school.name}
               className="h-10 w-10 rounded-full object-cover border border-gray-200 shadow-sm"
             />
 
             {/* Text */}
             <div className="flex flex-col leading-tight">
               <span className="text-sm font-semibold text-foreground">
-                Summit School GPT
+                {school.name}
               </span>
               <span className="text-xs text-muted-foreground">
-                Summit International School
+                {school.subtitle}
               </span>
             </div>
           </Link>

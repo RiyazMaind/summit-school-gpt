@@ -7,7 +7,17 @@ import {
   updatePassword,
   User,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, query, where } from 'firebase/firestore';
+import {
+  doc,
+  getDoc,
+  setDoc,
+  collection,
+  getDocs,
+  deleteDoc,
+  query,
+  where,
+} from 'firebase/firestore';
+import { getCurrentSchool } from '@/config/schools';
 
 export interface Teacher {
   id?: string;
@@ -28,6 +38,7 @@ export interface Student {
 
 export interface UserProfile {
   uid: string;
+  schoolId: string;
   role: 'admin' | 'teacher' | 'student';
   name: string;
   loginId: string;
@@ -37,17 +48,28 @@ export interface UserProfile {
   passwordUpdated: boolean;
 }
 
+export interface Admin {
+  id?: string;
+  name: string;
+  loginId: string;
+  email: string;
+  createdAt: Date;
+}
+
 interface AuthContextType {
   user: User | null;
   userProfile: UserProfile | null;
   loading: boolean;
-  login: (loginId: string, password: string) => Promise<void>;
+  login: (loginId: string, password: string) => Promise<UserProfile>;
   logout: () => Promise<void>;
   updateUserPassword: (newPassword: string) => Promise<void>;
+  addAdmin: (name: string, loginId: string) => Promise<void>;
   addTeacher: (name: string, loginId: string) => Promise<void>;
   addStudent: (name: string, loginId: string, grade: string) => Promise<void>;
+  getAdmins: () => Promise<Admin[]>;
   getTeachers: () => Promise<Teacher[]>;
   getStudents: () => Promise<Student[]>;
+  deleteAdmin: (id: string) => Promise<void>;
   deleteTeacher: (id: string) => Promise<void>;
   deleteStudent: (id: string) => Promise<void>;
 }
@@ -58,18 +80,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+
   const savedCredentialsRef = useRef<{ loginId: string; password: string } | null>(null);
   const CREDENTIALS_KEY = 'har-school-gpt-admin-creds';
+  const school = getCurrentSchool();
 
-  const loadSavedCredentials = () => {
-    try {
-      const raw = sessionStorage.getItem(CREDENTIALS_KEY);
-      if (!raw) return null;
-      return JSON.parse(raw) as { loginId: string; password: string };
-    } catch {
-      return null;
+  useEffect(() => {
+    const stored = sessionStorage.getItem(CREDENTIALS_KEY);
+    if (stored) {
+      try {
+        savedCredentialsRef.current = JSON.parse(stored);
+      } catch {
+        savedCredentialsRef.current = null;
+      }
     }
-  };
+  }, []);
+
+  // ✅ FIXED: NO "schools/" PREFIX
+  const getDocRef = (collectionName: string, id: string) =>
+    doc(db, collectionName, id);
+
+  const getCollectionRef = (collectionName: string) =>
+    collection(db, collectionName);
 
   const saveCredentials = (loginId: string, password: string) => {
     savedCredentialsRef.current = { loginId, password };
@@ -81,21 +113,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     sessionStorage.removeItem(CREDENTIALS_KEY);
   };
 
+  // ✅ AUTH STATE LISTENER
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
       setUser(currentUser);
+
       if (currentUser) {
         try {
-          const profileDoc = await getDoc(doc(db, 'users', currentUser.uid));
+          const profileDoc = await getDoc(getDocRef('users', currentUser.uid));
           if (profileDoc.exists()) {
             setUserProfile(profileDoc.data() as UserProfile);
+          } else {
+            setUserProfile(null);
           }
         } catch (error) {
-          console.error('Error fetching user profile:', error);
+          console.error('Error fetching profile:', error);
+          setUserProfile(null);
         }
       } else {
         setUserProfile(null);
       }
+
       setLoading(false);
     });
 
@@ -104,214 +142,154 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const normalizeEmail = (loginId: string) => {
     const normalized = loginId.trim().toLowerCase();
-    if (!normalized) {
-      throw new Error('Login ID is required');
-    }
-    if (normalized.includes(' ')) {
-      throw new Error('Login ID cannot contain spaces');
-    }
-    if (normalized.includes('@')) {
-      return normalized;
-    }
-    return `${normalized}@kodeshala.local`;
+
+    if (!normalized) throw new Error('Login ID required');
+    if (normalized.includes(' ')) throw new Error('No spaces allowed');
+
+    if (normalized.includes('@')) return normalized;
+
+    return `${normalized}@${school.id}.school.local`;
   };
 
-  const getSavedCredentials = () => {
-    return savedCredentialsRef.current || loadSavedCredentials();
-  };
+  // ✅ FIXED LOGIN
+  const login = async (loginId: string, password: string): Promise<UserProfile> => {
+    const email = normalizeEmail(loginId);
 
-  const login = async (loginId: string, password: string) => {
-    try {
-      const email = normalizeEmail(loginId);
-      await signInWithEmailAndPassword(auth, email, password);
-      saveCredentials(loginId, password);
-    } catch (error) {
-      throw error;
-    }
-  };
+    const result = await signInWithEmailAndPassword(auth, email, password);
 
-  const restorePreviousUser = async () => {
-    const saved = getSavedCredentials();
-    if (!saved) return null;
+    const profileDoc = await getDoc(getDocRef('users', result.user.uid));
 
-    const signInResult = await signInWithEmailAndPassword(
-      auth,
-      normalizeEmail(saved.loginId),
-      saved.password
-    );
-
-    const profileDoc = await getDoc(doc(db, 'users', signInResult.user.uid));
-    if (profileDoc.exists()) {
-      setUserProfile(profileDoc.data() as UserProfile);
+    if (!profileDoc.exists()) {
+      throw new Error('User profile not found in database');
     }
 
-    return signInResult.user;
+    const profile = profileDoc.data() as UserProfile;
+
+    setUserProfile(profile);
+    saveCredentials(loginId, password);
+
+    return profile;
   };
 
   const logout = async () => {
-    try {
-      await signOut(auth);
-      clearSavedCredentials();
-      setUserProfile(null);
-    } catch (error) {
-      throw error;
-    }
+    await signOut(auth);
+    clearSavedCredentials();
+    setUserProfile(null);
   };
 
   const updateUserPassword = async (newPassword: string) => {
-    try {
-      if (!user) throw new Error('No user logged in');
-      await updatePassword(user, newPassword);
-      // Update the passwordUpdated flag in Firestore
-      await setDoc(
-        doc(db, 'users', user.uid),
-        { passwordUpdated: true },
-        { merge: true }
-      );
-      setUserProfile((prev) => (prev ? { ...prev, passwordUpdated: true } : null));
-    } catch (error) {
-      throw error;
+    if (!user) throw new Error('No user logged in');
+
+    await updatePassword(user, newPassword);
+
+    await setDoc(getDocRef('users', user.uid), {
+      passwordUpdated: true,
+    }, { merge: true });
+
+    setUserProfile(prev => prev ? { ...prev, passwordUpdated: true } : null);
+  };
+
+  // ---------- CREATE USERS ----------
+
+  const createUser = async (
+    role: 'admin' | 'teacher' | 'student',
+    name: string,
+    loginId: string,
+    grade?: string
+  ) => {
+    const email = normalizeEmail(loginId);
+    const password = loginId;
+
+    const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password);
+
+    const userData: {
+      uid: string;
+      schoolId: string;
+      role: 'admin' | 'teacher' | 'student';
+      name: string;
+      loginId: string;
+      email: string;
+      grade?: string;
+      createdAt: Date;
+      passwordUpdated: boolean;
+    } = {
+      uid: newUser.uid,
+      schoolId: school.id,
+      role,
+      name,
+      loginId,
+      email,
+      createdAt: new Date(),
+      passwordUpdated: false,
+    };
+
+    if (grade) {
+      userData.grade = grade;
     }
+
+    await setDoc(getDocRef('users', newUser.uid), userData);
+
+    const adminCredentials = savedCredentialsRef.current;
+    if (adminCredentials) {
+      await login(adminCredentials.loginId, adminCredentials.password);
+    }
+
+    return newUser.uid;
+  };
+
+  const addAdmin = async (name: string, loginId: string) => {
+    const id = await createUser('admin', name, loginId);
+    await setDoc(getDocRef('admins', id), { id, name, loginId });
   };
 
   const addTeacher = async (name: string, loginId: string) => {
-    try {
-      const email = normalizeEmail(loginId);
-      const password = loginId; // Initial password same as login id
-      const previousUser = auth.currentUser?.uid;
-      const previousCredentials = getSavedCredentials();
-
-      if (!previousCredentials) {
-        throw new Error('Unable to restore admin session. Please log in again before creating users.');
-      }
-
-      const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password);
-
-      await setDoc(doc(db, 'users', newUser.uid), {
-        uid: newUser.uid,
-        role: 'teacher',
-        name,
-        loginId,
-        email,
-        createdAt: new Date(),
-        passwordUpdated: false,
-      });
-      await setDoc(doc(db, 'teachers', newUser.uid), {
-        id: newUser.uid,
-        name,
-        loginId,
-        email,
-        createdAt: new Date(),
-      });
-
-      if (previousUser && auth.currentUser?.uid !== previousUser) {
-        await restorePreviousUser();
-      }
-    } catch (error) {
-      throw error;
-    }
+    const id = await createUser('teacher', name, loginId);
+    await setDoc(getDocRef('teachers', id), { id, name, loginId });
   };
 
   const addStudent = async (name: string, loginId: string, grade: string) => {
-    try {
-      const email = normalizeEmail(loginId);
-      const password = loginId; // Initial password same as login id
-      const previousUser = auth.currentUser?.uid;
-      const previousCredentials = getSavedCredentials();
+    const id = await createUser('student', name, loginId, grade);
+    await setDoc(getDocRef('students', id), { id, name, loginId, grade });
+  };
 
-      if (!previousCredentials) {
-        throw new Error('Unable to restore admin session. Please log in again before creating users.');
-      }
+  // ---------- FETCH ----------
 
-      const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password);
-
-      await setDoc(doc(db, 'users', newUser.uid), {
-        uid: newUser.uid,
-        role: 'student',
-        name,
-        loginId,
-        email,
-        grade,
-        createdAt: new Date(),
-        passwordUpdated: false,
-      });
-      await setDoc(doc(db, 'students', newUser.uid), {
-        id: newUser.uid,
-        name,
-        loginId,
-        email,
-        grade,
-        createdAt: new Date(),
-      });
-
-      if (previousUser && auth.currentUser?.uid !== previousUser) {
-        await restorePreviousUser();
-      }
-    } catch (error) {
-      throw error;
-    }
+  const getAdmins = async (): Promise<Admin[]> => {
+    const snapshot = await getDocs(query(getCollectionRef('users'), where('role', '==', 'admin')));
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Admin[];
   };
 
   const getTeachers = async (): Promise<Teacher[]> => {
-  try {
-    const snapshot = await getDocs(collection(db, 'users'));
-
-    const teachers = snapshot.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }))
-      .filter((user: any) => user.role === "teacher");
-
-    console.log("Filtered teachers:", teachers);
-
-    return teachers as Teacher[];
-  } catch (error) {
-    console.error("Error fetching teachers:", error);
-    return [];
-  }
-};
+    const snapshot = await getDocs(query(getCollectionRef('users'), where('role', '==', 'teacher')));
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Teacher[];
+  };
 
   const getStudents = async (): Promise<Student[]> => {
-  try {
-    const q = query(
-      collection(db, 'users'),
-      where('role', '==', 'student')
-    );
+    const snapshot = await getDocs(query(getCollectionRef('users'), where('role', '==', 'student')));
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Student[];
+  };
 
-    const snapshot = await getDocs(q);
+  // ---------- DELETE ----------
 
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      name: doc.data().name,
-      loginId: doc.data().loginId,
-      email: doc.data().email,
-      grade: doc.data().grade,
-      createdAt: doc.data().createdAt,
-    })) as Student[];
-  } catch (error) {
-    console.error('Error fetching students:', error);
-    return [];
-  }
-};
+  const deleteAdmin = async (id: string) => {
+    await Promise.all([
+      deleteDoc(getDocRef('admins', id)),
+      deleteDoc(getDocRef('users', id)),
+    ]);
+  };
 
   const deleteTeacher = async (id: string) => {
-    try {
-      await Promise.all([
-        deleteDoc(doc(db, 'teachers', id)),
-        deleteDoc(doc(db, 'users', id)),
-      ]);
-    } catch (error) {
-      throw error;
-    }
+    await Promise.all([
+      deleteDoc(getDocRef('teachers', id)),
+      deleteDoc(getDocRef('users', id)),
+    ]);
   };
 
   const deleteStudent = async (id: string) => {
-    try {
-      await Promise.all([
-        deleteDoc(doc(db, 'students', id)),
-        deleteDoc(doc(db, 'users', id)),
-      ]);
-    } catch (error) {
-      throw error;
-    }
+    await Promise.all([
+      deleteDoc(getDocRef('students', id)),
+      deleteDoc(getDocRef('users', id)),
+    ]);
   };
 
   return (
@@ -323,10 +301,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         logout,
         updateUserPassword,
+        addAdmin,
         addTeacher,
         addStudent,
+        getAdmins,
         getTeachers,
         getStudents,
+        deleteAdmin,
         deleteTeacher,
         deleteStudent,
       }}
@@ -338,8 +319,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within AuthProvider');
   return context;
 }

@@ -6,10 +6,12 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/integrations/firebase/auth-context";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
+import { getCurrentSchool } from "@/config/schools";
 
 export default function Login() {
   const navigate = useNavigate();
   const { login, userProfile, loading } = useAuth();
+  const school = getCurrentSchool();
 
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
@@ -54,13 +56,13 @@ export default function Login() {
       <div
         className="hidden md:flex relative items-center justify-center text-white overflow-hidden"
         style={{
-          backgroundImage: "url('/school-bg.jpg')",
+          backgroundImage: `url('${school.background}')`,
           backgroundSize: "cover",
           backgroundPosition: "center",
         }}
       >
         {/* subtle zoom */}
-        <div className="absolute inset-0 scale-110 bg-[url('/school-bg.jpg')] bg-cover bg-center animate-[zoom_20s_linear_infinite]" />
+        <div className="absolute inset-0 scale-110 bg-[url('${school.background}')] bg-cover bg-center animate-[zoom_20s_linear_infinite]" />
 
         <div className="absolute inset-0 bg-black/60" />
 
@@ -74,7 +76,7 @@ export default function Login() {
             className="flex justify-center mb-8"
           >
             <img
-              src="/school-logo.png"
+              src={school.logo}
               alt="logo"
               className="h-44 w-44 object-contain rounded-full bg-white p-3 shadow-2xl hover:scale-105 transition-transform duration-300"
             />
@@ -86,7 +88,7 @@ export default function Login() {
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.2 }}
           >
-            Summit School GPT
+            {school.name}
           </motion.h1>
 
           <motion.p
@@ -95,7 +97,7 @@ export default function Login() {
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.3 }}
           >
-            A smarter way to manage learning, assessments, and student growth.
+            {school.description}
           </motion.p>
         </div>
       </div>
