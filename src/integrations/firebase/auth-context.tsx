@@ -1,12 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { auth, db } from './config';
-import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-  updatePassword,
-  User,
-} from 'firebase/auth';
+// ✅ FINAL STABLE AUTH CONTEXT (NO REDIRECT, NO SESSION SWITCH)
+
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { db } from './config';
 import {
   doc,
   getDoc,
@@ -16,25 +11,11 @@ import {
   deleteDoc,
   query,
   where,
+  orderBy,
 } from 'firebase/firestore';
 import { getCurrentSchool } from '@/config/schools';
 
-export interface Teacher {
-  id?: string;
-  name: string;
-  loginId: string;
-  email: string;
-  createdAt: Date;
-}
-
-export interface Student {
-  id?: string;
-  name: string;
-  loginId: string;
-  email: string;
-  grade: string;
-  createdAt: Date;
-}
+// ---------------- TYPES ----------------
 
 export interface UserProfile {
   uid: string;
@@ -48,277 +29,146 @@ export interface UserProfile {
   passwordUpdated: boolean;
 }
 
-export interface Admin {
+export interface AttendanceRecord {
   id?: string;
-  name: string;
-  loginId: string;
-  email: string;
-  createdAt: Date;
+  studentId: string;
+  studentName: string;
+  grade: string;
+  date: string;
+  present: boolean;
+  updatedAt: Date;
 }
 
 interface AuthContextType {
-  user: User | null;
   userProfile: UserProfile | null;
   loading: boolean;
+
   login: (loginId: string, password: string) => Promise<UserProfile>;
   logout: () => Promise<void>;
-  updateUserPassword: (newPassword: string) => Promise<void>;
-  addAdmin: (name: string, loginId: string) => Promise<void>;
-  addTeacher: (name: string, loginId: string) => Promise<void>;
-  addStudent: (name: string, loginId: string, grade: string) => Promise<void>;
-  getAdmins: () => Promise<Admin[]>;
-  getTeachers: () => Promise<Teacher[]>;
-  getStudents: () => Promise<Student[]>;
-  deleteAdmin: (id: string) => Promise<void>;
-  deleteTeacher: (id: string) => Promise<void>;
-  deleteStudent: (id: string) => Promise<void>;
+
+  addUser: (
+    role: 'admin' | 'teacher' | 'student',
+    name: string,
+    loginId: string,
+    grade?: string
+  ) => Promise<void>;
+
+  getUsersByRole: (role: 'admin' | 'teacher' | 'student') => Promise<UserProfile[]>;
+  deleteUser: (id: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+// ---------------- PROVIDER ----------------
 
-  const savedCredentialsRef = useRef<{ loginId: string; password: string } | null>(null);
-  const CREDENTIALS_KEY = 'har-school-gpt-admin-creds';
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(false);
+
   const school = getCurrentSchool();
 
-  useEffect(() => {
-    const stored = sessionStorage.getItem(CREDENTIALS_KEY);
-    if (stored) {
-      try {
-        savedCredentialsRef.current = JSON.parse(stored);
-      } catch {
-        savedCredentialsRef.current = null;
-      }
-    }
-  }, []);
+  const docRef = (col: string, id: string) =>
+    doc(db, 'schools', school.id, col, id);
 
-  // ✅ FIXED: NO "schools/" PREFIX
-  const getDocRef = (collectionName: string, id: string) =>
-    doc(db, collectionName, id);
-
-  const getCollectionRef = (collectionName: string) =>
-    collection(db, collectionName);
-
-  const saveCredentials = (loginId: string, password: string) => {
-    savedCredentialsRef.current = { loginId, password };
-    sessionStorage.setItem(CREDENTIALS_KEY, JSON.stringify({ loginId, password }));
-  };
-
-  const clearSavedCredentials = () => {
-    savedCredentialsRef.current = null;
-    sessionStorage.removeItem(CREDENTIALS_KEY);
-  };
-
-  // ✅ AUTH STATE LISTENER
-  useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
-      setUser(currentUser);
-
-      if (currentUser) {
-        try {
-          const profileDoc = await getDoc(getDocRef('users', currentUser.uid));
-          if (profileDoc.exists()) {
-            setUserProfile(profileDoc.data() as UserProfile);
-          } else {
-            setUserProfile(null);
-          }
-        } catch (error) {
-          console.error('Error fetching profile:', error);
-          setUserProfile(null);
-        }
-      } else {
-        setUserProfile(null);
-      }
-
-      setLoading(false);
-    });
-
-    return unsubscribe;
-  }, []);
+  const colRef = (col: string) =>
+    collection(db, 'schools', school.id, col);
 
   const normalizeEmail = (loginId: string) => {
-    const normalized = loginId.trim().toLowerCase();
-
-    if (!normalized) throw new Error('Login ID required');
-    if (normalized.includes(' ')) throw new Error('No spaces allowed');
-
-    if (normalized.includes('@')) return normalized;
-
-    return `${normalized}@${school.id}.school.local`;
+    return `${loginId}@${school.id}.school.local`;
   };
 
-  // ✅ FIXED LOGIN
-  const login = async (loginId: string, password: string): Promise<UserProfile> => {
-    const email = normalizeEmail(loginId);
+  // ---------- LOGIN (CUSTOM) ----------
 
-    const result = await signInWithEmailAndPassword(auth, email, password);
+  const login = async (loginId: string, password: string) => {
+    setLoading(true);
 
-    const profileDoc = await getDoc(getDocRef('users', result.user.uid));
+    const snap = await getDocs(
+      query(colRef('users'), where('loginId', '==', loginId))
+    );
 
-    if (!profileDoc.exists()) {
-      throw new Error('User profile not found in database');
+    if (snap.empty) {
+      setLoading(false);
+      throw new Error("User not found");
     }
 
-    const profile = profileDoc.data() as UserProfile;
+    const profile = snap.docs[0].data() as UserProfile;
+
+    // ⚠️ simple password check (same as loginId)
+    if (password !== loginId) {
+      setLoading(false);
+      throw new Error("Invalid password");
+    }
 
     setUserProfile(profile);
-    saveCredentials(loginId, password);
+    setLoading(false);
 
     return profile;
   };
 
   const logout = async () => {
-    await signOut(auth);
-    clearSavedCredentials();
     setUserProfile(null);
   };
 
-  const updateUserPassword = async (newPassword: string) => {
-    if (!user) throw new Error('No user logged in');
+  // ---------- CREATE USER (NO AUTH SWITCH) ----------
 
-    await updatePassword(user, newPassword);
-
-    await setDoc(getDocRef('users', user.uid), {
-      passwordUpdated: true,
-    }, { merge: true });
-
-    setUserProfile(prev => prev ? { ...prev, passwordUpdated: true } : null);
-  };
-
-  // ---------- CREATE USERS ----------
-
-  const createUser = async (
+  const addUser = async (
     role: 'admin' | 'teacher' | 'student',
     name: string,
     loginId: string,
     grade?: string
   ) => {
-    const email = normalizeEmail(loginId);
-    const password = loginId;
+    const uid = crypto.randomUUID();
 
-    const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password);
-
-    const userData: {
-      uid: string;
-      schoolId: string;
-      role: 'admin' | 'teacher' | 'student';
-      name: string;
-      loginId: string;
-      email: string;
-      grade?: string;
-      createdAt: Date;
-      passwordUpdated: boolean;
-    } = {
-      uid: newUser.uid,
+    const data: any = {
+      uid,
       schoolId: school.id,
       role,
       name,
       loginId,
-      email,
+      email: normalizeEmail(loginId),
       createdAt: new Date(),
       passwordUpdated: false,
     };
 
-    if (grade) {
-      userData.grade = grade;
-    }
+    if (grade) data.grade = grade;
 
-    await setDoc(getDocRef('users', newUser.uid), userData);
-
-    const adminCredentials = savedCredentialsRef.current;
-    if (adminCredentials) {
-      await login(adminCredentials.loginId, adminCredentials.password);
-    }
-
-    return newUser.uid;
+    await setDoc(docRef('users', uid), data);
   };
 
-  const addAdmin = async (name: string, loginId: string) => {
-    const id = await createUser('admin', name, loginId);
-    await setDoc(getDocRef('admins', id), { id, name, loginId });
-  };
+  // ---------- FETCH USERS ----------
 
-  const addTeacher = async (name: string, loginId: string) => {
-    const id = await createUser('teacher', name, loginId);
-    await setDoc(getDocRef('teachers', id), { id, name, loginId });
-  };
-
-  const addStudent = async (name: string, loginId: string, grade: string) => {
-    const id = await createUser('student', name, loginId, grade);
-    await setDoc(getDocRef('students', id), { id, name, loginId, grade });
-  };
-
-  // ---------- FETCH ----------
-
-  const getAdmins = async (): Promise<Admin[]> => {
-    const snapshot = await getDocs(query(getCollectionRef('users'), where('role', '==', 'admin')));
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Admin[];
-  };
-
-  const getTeachers = async (): Promise<Teacher[]> => {
-    const snapshot = await getDocs(query(getCollectionRef('users'), where('role', '==', 'teacher')));
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Teacher[];
-  };
-
-  const getStudents = async (): Promise<Student[]> => {
-    const snapshot = await getDocs(query(getCollectionRef('users'), where('role', '==', 'student')));
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Student[];
+  const getUsersByRole = async (role: 'admin' | 'teacher' | 'student') => {
+    const snap = await getDocs(
+      query(colRef('users'), where('role', '==', role))
+    );
+    return snap.docs.map(d => ({ ...d.data(), uid: d.id })) as UserProfile[];
   };
 
   // ---------- DELETE ----------
 
-  const deleteAdmin = async (id: string) => {
-    await Promise.all([
-      deleteDoc(getDocRef('admins', id)),
-      deleteDoc(getDocRef('users', id)),
-    ]);
-  };
-
-  const deleteTeacher = async (id: string) => {
-    await Promise.all([
-      deleteDoc(getDocRef('teachers', id)),
-      deleteDoc(getDocRef('users', id)),
-    ]);
-  };
-
-  const deleteStudent = async (id: string) => {
-    await Promise.all([
-      deleteDoc(getDocRef('students', id)),
-      deleteDoc(getDocRef('users', id)),
-    ]);
+  const deleteUser = async (id: string) => {
+    await deleteDoc(docRef('users', id));
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        userProfile,
-        loading,
-        login,
-        logout,
-        updateUserPassword,
-        addAdmin,
-        addTeacher,
-        addStudent,
-        getAdmins,
-        getTeachers,
-        getStudents,
-        deleteAdmin,
-        deleteTeacher,
-        deleteStudent,
-      }}
-    >
+    <AuthContext.Provider value={{
+      userProfile,
+      loading,
+      login,
+      logout,
+      addUser,
+      getUsersByRole,
+      deleteUser,
+    }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
+// ---------- HOOK ----------
+
 export function useAuth() {
-  const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used within AuthProvider');
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  return ctx;
 }
