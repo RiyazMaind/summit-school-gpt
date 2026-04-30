@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { BookOpen, LayoutDashboard, GraduationCap, Users, LogOut, Menu, X, ChevronDown } from "lucide-react";
+import { BookOpen, LayoutDashboard, GraduationCap, Users, LogOut, Menu, X, ChevronDown, CalendarDays, TrendingUp, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getCurrentSchool } from "@/config/schools";
 
@@ -25,13 +25,16 @@ const roleConfig = {
     navItems: [
       { path: "/teacher", label: "Dashboard", icon: LayoutDashboard },
       { path: "/teacher/quiz", label: "Create Quiz", icon: BookOpen },
+      { path: "/teacher/attendance", label: "Attendance", icon: CalendarDays },
+      { path: "/teacher/analytics", label: "Analytics", icon: TrendingUp },
     ],
   },
   admin: {
     label: "Admin",
     icon: LayoutDashboard,
     navItems: [
-      { path: "/admin", label: "Analytics", icon: LayoutDashboard },
+      { path: "/admin", label: "Dashboard", icon: LayoutDashboard },
+      { path: "/admin/attendance-analytics", label: "Attendance Analytics", icon: BarChart3 },
     ],
   },
 };

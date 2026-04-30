@@ -25,6 +25,7 @@ export interface UserProfile {
   loginId: string;
   email: string;
   grade?: string;
+  assignedGrade?: string;
   createdAt: Date;
   passwordUpdated: boolean;
 }
@@ -53,7 +54,14 @@ interface AuthContextType {
     grade?: string
   ) => Promise<void>;
 
+  updateUser: (id: string, updates: Partial<Pick<UserProfile, 'assignedGrade' | 'grade' | 'name'>>) => Promise<void>;
+  checkLoginIdExists: (loginId: string) => Promise<boolean>;
   getUsersByRole: (role: 'admin' | 'teacher' | 'student') => Promise<UserProfile[]>;
+  getStudentsByGrade: (grade: string) => Promise<UserProfile[]>;
+  getAttendanceRecords: (grade: string, date: string) => Promise<AttendanceRecord[]>;
+  getAttendanceAnalytics: (grade: string) => Promise<AttendanceRecord[]>;
+  getAllAttendanceRecords: () => Promise<AttendanceRecord[]>;
+  saveAttendanceRecords: (grade: string, date: string, records: AttendanceRecord[]) => Promise<void>;
   deleteUser: (id: string) => Promise<void>;
 }
 
@@ -72,6 +80,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const colRef = (col: string) =>
     collection(db, 'schools', school.id, col);
+
+  const attendanceCollection = () =>
+    collection(db, 'schools', school.id, 'attendance');
+
+  const attendanceDocRef = (id: string) =>
+    doc(db, 'schools', school.id, 'attendance', id);
+
+  const attendanceId = (grade: string, date: string, studentId: string) =>
+    `${grade}-${date}-${studentId}`;
 
   const normalizeEmail = (loginId: string) => {
     return `${loginId}@${school.id}.school.local`;
@@ -146,6 +163,69 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // ---------- DELETE ----------
 
+  const checkLoginIdExists = async (loginId: string) => {
+    const snap = await getDocs(
+      query(colRef('users'), where('loginId', '==', loginId))
+    );
+    return !snap.empty;
+  };
+
+  const updateUser = async (
+    id: string,
+    updates: Partial<Pick<UserProfile, 'assignedGrade' | 'grade' | 'name'>>
+  ) => {
+    await setDoc(docRef('users', id), updates, { merge: true });
+  };
+
+  const getStudentsByGrade = async (grade: string) => {
+    const snap = await getDocs(
+      query(colRef('users'), where('role', '==', 'student'), where('grade', '==', grade))
+    );
+    return snap.docs.map(d => ({ ...d.data(), uid: d.id })) as UserProfile[];
+  };
+
+  const getAttendanceRecords = async (grade: string, date: string) => {
+    const snap = await getDocs(
+      query(
+        attendanceCollection(),
+        where('grade', '==', grade),
+        where('date', '==', date)
+      )
+    );
+    return snap.docs.map(d => ({ ...(d.data() as AttendanceRecord), id: d.id }));
+  };
+
+  const getAttendanceAnalytics = async (grade: string) => {
+    const snap = await getDocs(
+      query(attendanceCollection(), where('grade', '==', grade))
+    );
+    return snap.docs.map(d => ({ ...(d.data() as AttendanceRecord), id: d.id }));
+  };
+
+  const getAllAttendanceRecords = async () => {
+    const snap = await getDocs(attendanceCollection());
+    return snap.docs.map(d => ({ ...(d.data() as AttendanceRecord), id: d.id }));
+  };
+
+  const saveAttendanceRecords = async (
+    grade: string,
+    date: string,
+    records: AttendanceRecord[]
+  ) => {
+    await Promise.all(
+      records.map((record) =>
+        setDoc(attendanceDocRef(attendanceId(grade, date, record.studentId)), {
+          studentId: record.studentId,
+          studentName: record.studentName,
+          grade,
+          date,
+          present: record.present,
+          updatedAt: record.updatedAt,
+        })
+      )
+    );
+  };
+
   const deleteUser = async (id: string) => {
     await deleteDoc(docRef('users', id));
   };
@@ -157,7 +237,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       login,
       logout,
       addUser,
+      updateUser,
+      checkLoginIdExists,
       getUsersByRole,
+      getStudentsByGrade,
+      getAttendanceRecords,
+      getAttendanceAnalytics,
+      getAllAttendanceRecords,
+      saveAttendanceRecords,
       deleteUser,
     }}>
       {children}

@@ -9,7 +9,10 @@ import Login from "./pages/Login";
 import StudentDashboard from "./pages/StudentDashboard";
 import StudentTopic from "./pages/StudentTopic";
 import TeacherDashboard from "./pages/TeacherDashboard";
+import TeacherAttendance from "./pages/TeacherAttendance";
+import TeacherAttendanceAnalytics from "./pages/TeacherAttendanceAnalytics";
 import AdminDashboard from "./pages/AdminDashboard";
+import AdminAttendanceAnalytics from "./pages/AdminAttendanceAnalytics";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -29,7 +32,10 @@ const App = () => (
             <Route path="/student/topic" element={<StudentTopic />} />
             <Route path="/teacher" element={<TeacherDashboard />} />
             <Route path="/teacher/quiz" element={<TeacherDashboard />} />
+            <Route path="/teacher/attendance" element={<TeacherAttendance />} />
+            <Route path="/teacher/analytics" element={<TeacherAttendanceAnalytics />} />
             <Route path="/admin" element={<AdminDashboard />} />
+            <Route path="/admin/attendance-analytics" element={<AdminAttendanceAnalytics />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
